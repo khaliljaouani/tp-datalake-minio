@@ -1,0 +1,126 @@
+{
+  "name": "TP Data Lake - Ingestion Pokemon",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "11111111-1111-1111-1111-111111111111",
+      "name": "Demarrer",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-100, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://pokeapi.co/api/v2/pokemon/pikachu",
+        "options": {}
+      },
+      "id": "22222222-2222-2222-2222-222222222222",
+      "name": "PokeAPI - Get Pokemon",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $json;\nconst name = p.name;\nreturn [{ json: {\n  pokemon_id: p.id,\n  name: name,\n  height: p.height,\n  weight: p.weight,\n  base_xp: p.base_experience,\n  image_url: (p.sprites && p.sprites.other && p.sprites.other['official-artwork'] && p.sprites.other['official-artwork'].front_default) || p.sprites.front_default,\n  bucket_raw: 'raw-pokemon',\n  object_key_raw: name + '/raw.json',\n  bucket_img: 'pokemon-images',\n  object_key_img: name + '/official-artwork.png',\n  raw_json: JSON.stringify(p)\n} }];"
+      },
+      "id": "33333333-3333-3333-3333-333333333333",
+      "name": "Preparer metadonnees",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [340, 300]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=http://minio:9000/{{ $('Preparer metadonnees').item.json.bucket_raw }}/{{ $('Preparer metadonnees').item.json.object_key_raw }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $('Preparer metadonnees').item.json.raw_json }}",
+        "options": {}
+      },
+      "id": "44444444-4444-4444-4444-444444444444",
+      "name": "MinIO - Upload JSON brut",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [560, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Preparer metadonnees').item.json.image_url }}",
+        "options": { "response": { "response": { "responseFormat": "file", "outputPropertyName": "data" } } }
+      },
+      "id": "55555555-5555-5555-5555-555555555555",
+      "name": "PokeAPI - Get Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 300]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=http://minio:9000/{{ $('Preparer metadonnees').item.json.bucket_img }}/{{ $('Preparer metadonnees').item.json.object_key_img }}",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "66666666-6666-6666-6666-666666666666",
+      "name": "MinIO - Upload Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO pokemon (pokemon_id, name, height, weight, base_xp) VALUES ({{ $('Preparer metadonnees').item.json.pokemon_id }}, '{{ $('Preparer metadonnees').item.json.name }}', {{ $('Preparer metadonnees').item.json.height }}, {{ $('Preparer metadonnees').item.json.weight }}, {{ $('Preparer metadonnees').item.json.base_xp }}) ON CONFLICT (pokemon_id) DO UPDATE SET name = EXCLUDED.name, height = EXCLUDED.height, weight = EXCLUDED.weight, base_xp = EXCLUDED.base_xp;",
+        "options": {}
+      },
+      "id": "77777777-7777-7777-7777-777777777777",
+      "name": "PG - Upsert Pokemon",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1220, 300],
+      "credentials": { "postgres": { "id": "C4rCf8FEgJcTwbAx", "name": "Postgres Datalake" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO pokemon_files (pokemon_id, bucket_name, object_key, file_name, file_type, mime_type, internal_url) VALUES ({{ $('Preparer metadonnees').item.json.pokemon_id }}, 'raw-pokemon', '{{ $('Preparer metadonnees').item.json.object_key_raw }}', 'raw.json', 'raw_json', 'application/json', 'http://minio:9000/raw-pokemon/{{ $('Preparer metadonnees').item.json.object_key_raw }}'), ({{ $('Preparer metadonnees').item.json.pokemon_id }}, 'pokemon-images', '{{ $('Preparer metadonnees').item.json.object_key_img }}', 'official-artwork.png', 'image', 'image/png', 'http://minio:9000/pokemon-images/{{ $('Preparer metadonnees').item.json.object_key_img }}') ON CONFLICT (bucket_name, object_key) DO NOTHING;",
+        "options": {}
+      },
+      "id": "88888888-8888-8888-8888-888888888888",
+      "name": "PG - Inserer fichiers",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1440, 300],
+      "credentials": { "postgres": { "id": "C4rCf8FEgJcTwbAx", "name": "Postgres Datalake" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO file_ingestion_log (file_name, bucket_name, object_key, source, status, message) VALUES ('raw.json', 'raw-pokemon', '{{ $('Preparer metadonnees').item.json.object_key_raw }}', 'pokeapi', 'SUCCESS', 'Ingestion via workflow n8n'), ('official-artwork.png', 'pokemon-images', '{{ $('Preparer metadonnees').item.json.object_key_img }}', 'pokeapi', 'SUCCESS', 'Ingestion via workflow n8n');",
+        "options": {}
+      },
+      "id": "99999999-9999-9999-9999-999999999999",
+      "name": "PG - Journal ingestion",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1660, 300],
+      "credentials": { "postgres": { "id": "C4rCf8FEgJcTwbAx", "name": "Postgres Datalake" } }
+    }
+  ],
+  "connections": {
+    "Demarrer": { "main": [[{ "node": "PokeAPI - Get Pokemon", "type": "main", "index": 0 }]] },
+    "PokeAPI - Get Pokemon": { "main": [[{ "node": "Preparer metadonnees", "type": "main", "index": 0 }]] },
+    "Preparer metadonnees": { "main": [[{ "node": "MinIO - Upload JSON brut", "type": "main", "index": 0 }]] },
+    "MinIO - Upload JSON brut": { "main": [[{ "node": "PokeAPI - Get Image", "type": "main", "index": 0 }]] },
+    "PokeAPI - Get Image": { "main": [[{ "node": "MinIO - Upload Image", "type": "main", "index": 0 }]] },
+    "MinIO - Upload Image": { "main": [[{ "node": "PG - Upsert Pokemon", "type": "main", "index": 0 }]] },
+    "PG - Upsert Pokemon": { "main": [[{ "node": "PG - Inserer fichiers", "type": "main", "index": 0 }]] },
+    "PG - Inserer fichiers": { "main": [[{ "node": "PG - Journal ingestion", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

@@ -1,0 +1,10 @@
+# Node
+node_modules/
+
+# Captures de travail temporaires
+preuves/_test_capture.png
+
+# Divers
+*.log
+.DS_Store
+Thumbs.db
