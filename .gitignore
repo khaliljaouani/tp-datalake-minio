@@ -8,3 +8,6 @@ preuves/_test_capture.png
 *.log
 .DS_Store
 Thumbs.db
+
+# Fichiers temporaires Office
+~$*
